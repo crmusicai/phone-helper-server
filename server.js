@@ -63,11 +63,52 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
+  if (url.pathname === '/api/register' && req.method === 'POST') {
+    // Public self-registration (v2): a brand-new client phone claims the next
+    // free numeric ID with zero typing. Creates the exact same record shape as
+    // POST /api/clients (server-generated token, claimed=false); the returned
+    // token is what the app stores permanently and presents on WS register.
+    let body = '';
+    req.on('data', d => body += d);
+    req.on('end', () => {
+      let maxExisting = 0;
+      for (const id of clients.keys()) {
+        const n = Number(id);
+        if (Number.isInteger(n) && n > maxExisting) maxExisting = n;
+      }
+      let next = Math.max(1000, maxExisting) + 1;
+      while (clients.has(String(next))) next++;
+      const c = { id: String(next), name: 'নতুন ফোন', phone: '', token: crypto.randomBytes(16).toString('hex'), claimed: false, createdAt: new Date().toISOString() };
+      clients.set(c.id, c); saveClients(); broadcastPresence();
+      return json(res, 201, { id: c.id, token: c.token, name: c.name });
+    });
+    return;
+  }
   if (url.pathname.startsWith('/api/clients/') && req.method === 'DELETE') {
     if (!authProvider(req)) return json(res, 401, { error: 'bad provider key' });
     const id = decodeURIComponent(url.pathname.split('/')[3]);
     clients.delete(id); saveClients(); broadcastPresence();
     return json(res, 200, { ok: true });
+  }
+  if (url.pathname.startsWith('/api/clients/') && req.method === 'PUT') {
+    // Rename/update (v2): provider edits name/phone of an existing client
+    // (e.g. an auto-registered phone). Never touches id/token/claimed.
+    if (!authProvider(req)) return json(res, 401, { error: 'bad provider key' });
+    const id = decodeURIComponent(url.pathname.split('/')[3]);
+    const c = clients.get(id);
+    if (!c) return json(res, 404, { error: 'unknown client id' });
+    let body = '';
+    req.on('data', d => body += d);
+    req.on('end', () => {
+      try {
+        const { name, phone } = JSON.parse(body || '{}');
+        if (typeof name === 'string' && name.trim()) c.name = name.trim();
+        if (typeof phone === 'string' && phone.trim()) c.phone = phone.trim();
+        saveClients(); broadcastPresence();
+        return json(res, 200, { client: clientView(c) });
+      } catch (e) { return json(res, 400, { error: 'bad json' }); }
+    });
+    return;
   }
   json(res, 404, { error: 'not found' });
 });
