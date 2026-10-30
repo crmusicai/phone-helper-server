@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: phone-helper-server
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: PROVIDER_KEY
+        sync: false
